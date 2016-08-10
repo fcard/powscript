@@ -230,11 +230,39 @@ lint_pipe(){
   fi
 }
 
+prompt() {
+  printf '%'$((1+$ismult+$depth))'s' | tr ' ' ">"
+  printf ' '
+}
+
+escapedline() {
+  local mult="$1"
+  local line="$2"
+
+  if [ -x $mult ]; then
+    mult="$line"
+  else
+    mult="$mult$line"
+  fi
+  printf "$mult"
+}
+
 console(){
   echo "hit ctrl-c to exit powscript, type 'edit' to launch editor, and 'help' for help"
-  while IFS="" read -r -e -d $'\n' -p "> " line; do
-    "$1" "$line" || [[ $? =~ (0|1|2|3|13|15) ]]
-    history -s "$line"
+  ismult=0
+  depth=0
+  local multiline=''
+  while IFS="" read -r -e -d $'\n' -p "$(prompt)" line; do
+    if [[ $line == *'\' ]]; then
+      multiline="$(escapedline "$multiline" "${line%?}")"
+      ismult=1
+    else
+      multiline="$(escapedline "$multiline" "$line")"
+      "$1" "$multiline" || [[ $? =~ (0|1|2|3|13|15) ]]
+      history -s "$multiline"
+      multiline=''
+      ismult=0
+    fi
   done
 }
 
