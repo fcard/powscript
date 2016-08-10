@@ -57,6 +57,7 @@ transpile_sugar(){
     [[ "$line" =~ (\$[a-zA-Z_0-9]*\[)                 ]] && transpile_array_get "$line"                  && continue
     [[ "$line" =~ ^([ ]*for line from )               ]] && transpile_foreachline_from "$line"           && continue
     [[ "$line" =~ ^([ ]*for )                         ]] && transpile_for "$line"                        && continue
+    [[ "$line" =~ ^([ ]*while )                       ]] && transpile_while "$line"                      && continue
     [[ "$line" =~ ^([ ]*when done)                    ]] && transpile_when_done "$line"                  && continue
     [[ "$line" =~ (await .* then for line)            ]] && transpile_then "$line" "pl" "pipe_each_line" && continue
     [[ "$line" =~ (await .* then \|)                  ]] && transpile_then "$line" "p"  "pipe"           && continue
