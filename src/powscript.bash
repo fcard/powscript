@@ -113,6 +113,7 @@ compile(){
   cat $tmpfile.code
   [[ ! $PIPE == 2 ]] && for i in ${!footer[@]}; do echo "${footer[$i]}"; done 
   rm $tmpfile
+  rm $tmpfile.code
 }
 
 

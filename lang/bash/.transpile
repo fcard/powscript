@@ -40,8 +40,14 @@ stack_update(){
   if ((indent_current < indent_last)); then stack_pop "$1"; fi
 }
 
+get_array_code(){
+  printf '"'
+  printf "\${$1[$2]}"
+  printf '"'
+}
+
 transpile_all(){
-  cat - | while IFS="" read -r line; do
+  while IFS="" read -r line; do
     i=$(getindent "$line")
     [[ "$line" =~ ^(#) ]] && local _comment="#"
     [[ "$line" =~ "={}" ]] && echo "$_comment$(makeindent $i)declare -A ${line/=\{\}/}" && continue
@@ -61,22 +67,22 @@ transpile_for(){
   if [[ "$code" =~ [a-zA-Z_0-9],[a-zA-Z_0-9] ]]; then
     local key="$(echo "$code" | awk '{ print $2 }' | awk -F',' '{ print $1 }')"
     local value="$(echo "$code" | awk '{ print $2 }' | awk -F',' '{ print $2 }')"
-    code="$code\n$indent$value=\"\${$arr[\$$key]}\""
+    code="$code\n$indent$value=$(get_array_code $arr "\$$key")"
     code="${code/,$value/}"
     code="${code/ of / in }"
-    code="${code/ $arr/ \"\${!$arr\[@\]\}\"}";
+    code="${code/ $arr/ $(get_array_code "!$arr" @)}";
   else
     # iterate over indexed array
     local key="$(echo "$code" | awk '{ print $2 }')"
-    code="${code/ $arr/ \"\${$arr\[@\]\}\"}"
+    code="${code/ $arr/ $(get_array_code $arr @)}"
   fi
   echo -e "$code" | transpile_all
 }
 
 transpile_if(){
   push stack "fi"
-  code="${1/if not/if \!}"
-  firstvar="${code/\! /}"
+  code="${1/if not/if !}"
+  firstvar="${code/! /}"
   firstvar="$(echo "$firstvar" | awk '{ print $2 }')"
   code="${code// and / && }"
   code="${code// or / || }"
@@ -132,7 +138,7 @@ transpile_array_push(){
 }
 
 transpile_array_get(){
-  code="${1/\$/\"\$\{}"
+  code="${1/\$/\"\${}"
   echo "$code}\""
 }
 
