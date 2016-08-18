@@ -1,5 +1,5 @@
 indent_current=0
-indent_last=0
+indent_level=0
 stack=()
 anonymous_funcs=0
 
@@ -12,7 +12,24 @@ add_anonymous_func(){
 }
 
 push (){
-  var="$1"; shift 1; eval "$var+=($(printf "'%s' " "$@"))";
+  local var="$1"
+  shift 1
+  eval "$var+=($(printf "'%s' " "$@"))";
+}
+
+pop (){
+  local var="$1"
+  eval "
+    local index=\$((\${#$var[@]}-1))
+    local lastitem=\"\${$var[\$index]}\"
+    echo -e \"\$lastitem\"
+    unset $var[\$index]
+  "
+}
+
+stack_push(){
+  indent_level=$(($indent_level+2))
+  push stack "$1"
 }
 
 makeindent(){
@@ -20,24 +37,43 @@ makeindent(){
 }
 
 stack_pop(){
-  index=${#stack[@]}
-  index=$((index-1))
-  [[ $index == "-1" ]] && return 0
-  [[ "$1" =~ ^([ ]*else) ]] && echo "$1" && continue # ignore else
-  lastitem="${stack[$index]}"
-  unset stack["$index"]
-  echo -e "$(makeindent $((indent_last-2)) )$lastitem"
-  if ! (( (indent_last-2) == indent_current )); then
-    indent_last=$((indent_last-2))
-    stack_pop "$1"
-  fi
+  indent_level=$(($indent_level-2))
+  printf "$(makeindent $indent_level)"
+  pop stack
+}
+
+stack_catchup(){
+  local do_continue=false
+  while ((indent_current < indent_level)); do
+    [[ $index == "-1" ]] && return 0
+    if [[ $indent_current == $(($indent_level-2)) ]]; then
+      if [[ $1 =~ ^(" "*else) ]]; then
+        echo "$1"
+        do_continue=true
+        break
+      elif [[ $1 =~ ^(" "*elif) ]]; then
+        transpile_elif "$1"
+        do_continue=true
+        break
+      elif [[ $1 =~ ^(" "*when done) ]]; then
+        echo "$(makeindent $indent_current)}"
+        transpile_when_done $1
+        do_continue=true
+        break
+      else
+        stack_pop $1
+      fi
+    else
+      stack_pop $1
+    fi
+  done
+  $do_continue && continue || true
 }
 
 stack_update(){
-  indent_last="$indent_current"
   indent_current=$(getindent "$1")
-  [[ -n $DEBUG ]] && echo ">> $indent_last|$indent_current|stacksize:${#stack[@]}"
-  if ((indent_current < indent_last)); then stack_pop "$1"; fi
+  [[ -n $DEBUG ]] && echo ">> $indent_level|$indent_current|stacksize:${#stack[@]}"
+  if ((indent_current < indent_level)); then stack_catchup "$1"; fi
 }
 
 get_array_code(){
@@ -58,7 +94,7 @@ transpile_all(){
 }
 
 transpile_for(){
-  push stack "done"
+  stack_push "done"
   local arr="$(echo "$1" | awk '{ print $4 }' )"
   local i=$(( $(getindent "$code") + 2 ))
   code="$1; do"
@@ -80,15 +116,21 @@ transpile_for(){
 }
 
 transpile_while(){
-  push stack "done"
+  stack_push "done"
   code="$(transpile_condition while "$1" "$2")"
   code="$code; do"
   echo "$code" | transpile_all
 }
 
 transpile_if(){
-  push stack "fi"
+  stack_push "fi"
   code="$(transpile_condition "if" "$1" "$2")"
+  code="$code; then"
+  echo "$code" | transpile_all
+}
+
+transpile_elif(){
+  code="$(transpile_condition "elif" "$1" "$1")"
   code="$code; then"
   echo "$code" | transpile_all
 }
@@ -123,25 +165,24 @@ transpile_then(){
   local indent="$(makeindent $curindent)"
   if [[ $category =~ "pipe" ]]; then
     add_anonymous_func
-    push stack "}\n$indent""async_$category _then_when_done_$anonymous_funcs "_"$category"_"$funcindex ${line/ then*/}"
-    push stack ""
+    stack_push "}\n$indent""async_$category _then_when_done_$anonymous_funcs "_"$category"_"$funcindex ${line/ then*/}"
   else
-    push stack "}\n$indent""async_$category "_"$category"_"$funcindex ${line/ then*/}"
+    stack_push "}\n$indent""async_$category "_"$category"_"$funcindex ${line/ then*/}"
   fi
 }
 
 transpile_when_done(){
   local curindent=$(getindent "$1")
-  echo -e "}\n_then_when_done_"$anonymous_funcs"(){"
+  echo "_then_when_done_"$anonymous_funcs"(){"
 }
 
 transpile_switch(){
-  push stack "esac"
+  stack_push "esac"
   echo "${1/switch/case} in"
 }
 
 transpile_case(){
-  push stack "  ;;"
+  stack_push "  ;;"
   echo "${1/case /})"
 }
 
@@ -160,11 +201,11 @@ transpile_foreachline_from(){
   local curindent=$(getindent "$1")
   local indent="$(makeindent $curindent)"
   echo "$indent""while IFS=\"\" read -r line; do"
-  push stack $indent"done < $file"
+  stack_push $indent"done < $file"
 }
 
 transpile_function(){
-  push stack "}"
+  stack_push "}"
   local curindent=$(( $(getindent "$1") + 2 ))
   local indent="$(makeindent $curindent)"
   fields="${1//*\(/}"
