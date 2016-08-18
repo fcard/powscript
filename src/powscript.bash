@@ -57,6 +57,7 @@ transpile_sugar(){
     [[ "$line" =~ (\$[a-zA-Z_0-9]*\[)                 ]] && transpile_array_get "$line"                  && continue
     [[ "$line" =~ ^([ ]*for line from )               ]] && transpile_foreachline_from "$line"           && continue
     [[ "$line" =~ ^([ ]*for )                         ]] && transpile_for "$line"                        && continue
+    [[ "$line" =~ ^([ ]*while )                       ]] && transpile_while "$line"                      && continue
     [[ "$line" =~ ^([ ]*when done)                    ]] && transpile_when_done "$line"                  && continue
     [[ "$line" =~ (await .* then for line)            ]] && transpile_then "$line" "pl" "pipe_each_line" && continue
     [[ "$line" =~ (await .* then \|)                  ]] && transpile_then "$line" "p"  "pipe"           && continue
@@ -113,6 +114,7 @@ compile(){
   cat $tmpfile.code
   [[ ! $PIPE == 2 ]] && for i in ${!footer[@]}; do echo "${footer[$i]}"; done 
   rm $tmpfile
+  rm $tmpfile.code
 }
 
 
@@ -230,12 +232,39 @@ lint_pipe(){
   fi
 }
 
+prompt() {
+  printf '%'$((1+$ismult+$depth))'s' | tr ' ' ">"
+  printf ' '
+}
+
+escapedline() {
+  local mult="$1"
+  local line="$2"
+
+  if [ -x $mult ]; then
+    mult="$line"
+  else
+    mult="$mult$line"
+  fi
+  printf "$mult"
+}
+
 console(){
-  [[ ! $1 == "1" ]] && echo "hit ctrl-c to exit powscript, type 'edit' to launch editor, and 'help' for help"
-  trap 'console 1' 0 1 2 3 13 15 # EXIT HUP INT QUIT PIPE TERM SIGTERM SIGHUP
-  while IFS="" read -r -e -d $'\n' -p "> " line; do
-    "$1" "$line"
-    history -s "$line"
+  echo "hit ctrl-c to exit powscript, type 'edit' to launch editor, and 'help' for help"
+  ismult=0
+  depth=0
+  local multiline=''
+  while IFS="" read -r -e -d $'\n' -p "$(prompt)" line; do
+    if [[ $line == *'\' ]]; then
+      multiline="$(escapedline "$multiline" "${line%?}")"
+      ismult=1
+    else
+      multiline="$(escapedline "$multiline" "$line")"
+      "$1" "$multiline" || [[ $? =~ (0|1|2|3|13|15) ]]
+      history -s "$multiline"
+      multiline=''
+      ismult=0
+    fi
   done
 }
 

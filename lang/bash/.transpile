@@ -6,16 +6,16 @@ anonymous_funcs=0
 getindent(){
   echo "$1" | sed "s/\n/ /g" | awk '{ match($0, /^ */); printf("%d", RLENGTH) }' | sed 's/00/0/g'
 }
-  
+
 add_anonymous_func(){
   anonymous_funcs=$((anonymous_funcs+1))
 }
 
-push (){ 
-  var="$1"; shift 1; eval "$var+=($(printf "'%s' " "$@"))"; 
+push (){
+  var="$1"; shift 1; eval "$var+=($(printf "'%s' " "$@"))";
 }
 
-makeindent(){  
+makeindent(){
   for((i=0;i<$1;i++)); do printf " "; done
 }
 
@@ -27,7 +27,7 @@ stack_pop(){
   lastitem="${stack[$index]}"
   unset stack["$index"]
   echo -e "$(makeindent $((indent_last-2)) )$lastitem"
-  if ! (( (indent_last-2) == indent_current )); then 
+  if ! (( (indent_last-2) == indent_current )); then
     indent_last=$((indent_last-2))
     stack_pop "$1"
   fi
@@ -40,8 +40,14 @@ stack_update(){
   if ((indent_current < indent_last)); then stack_pop "$1"; fi
 }
 
+get_array_code(){
+  printf '"'
+  printf "\${$1[$2]}"
+  printf '"'
+}
+
 transpile_all(){
-  cat - | while IFS="" read -r line; do
+  while IFS="" read -r line; do
     i=$(getindent "$line")
     [[ "$line" =~ ^(#) ]] && local _comment="#"
     [[ "$line" =~ "={}" ]] && echo "$_comment$(makeindent $i)declare -A ${line/=\{\}/}" && continue
@@ -61,22 +67,36 @@ transpile_for(){
   if [[ "$code" =~ [a-zA-Z_0-9],[a-zA-Z_0-9] ]]; then
     local key="$(echo "$code" | awk '{ print $2 }' | awk -F',' '{ print $1 }')"
     local value="$(echo "$code" | awk '{ print $2 }' | awk -F',' '{ print $2 }')"
-    code="$code\n$indent$value=\"\${$arr[\$$key]}\""
+    code="$code\n$indent$value=$(get_array_code $arr "\$$key")"
     code="${code/,$value/}"
     code="${code/ of / in }"
-    code="${code/ $arr/ \"\${!$arr\[@\]\}\"}";
+    code="${code/ $arr/ $(get_array_code "!$arr" @)}";
   else
     # iterate over indexed array
     local key="$(echo "$code" | awk '{ print $2 }')"
-    code="${code/ $arr/ \"\${$arr\[@\]\}\"}"
+    code="${code/ $arr/ $(get_array_code $arr @)}"
   fi
   echo -e "$code" | transpile_all
 }
 
+transpile_while(){
+  push stack "done"
+  code="$(transpile_condition while "$1" "$2")"
+  code="$code; do"
+  echo "$code" | transpile_all
+}
+
 transpile_if(){
   push stack "fi"
-  code="${1/if not/if \!}"
-  firstvar="${code/\! /}"
+  code="$(transpile_condition "if" "$1" "$2")"
+  code="$code; then"
+  echo "$code" | transpile_all
+}
+
+transpile_condition(){
+  form=$1
+  code="${2/$form not/$form !}"
+  firstvar="${code/! /}"
   firstvar="$(echo "$firstvar" | awk '{ print $2 }')"
   code="${code// and / && }"
   code="${code// or / || }"
@@ -85,18 +105,17 @@ transpile_if(){
   code="${code//< /-lt }"
   code="${code//<= /-le }"
   code="${code//!= /-ne }"
-  [[ "$code" =~ (if[ ]) && "$firstvar" =~ ^([\"\$-]) ]] && code="${code/if /if [[ }"
+  [[ "$code" =~ ($form[ ]) && "$firstvar" =~ ^([\"\$-]) ]] && code="${code/$form /$form [[ }"
   code="${code/match /=~ }"
   [[ "$code" =~ "[[" ]] && code="$code ]]"
-  code="$code; then"
   code="${code// is / == }"
-  echo "$code" | transpile_all
+  echo "$code"
 }
 
 transpile_then(){
   line="${*/await /}"
   [[ ! -n $3 ]] && category="then" || category="$3"
-  add_anonymous_func 
+  add_anonymous_func
   funcindex=$anonymous_funcs
   echo -e "\n# async code"
   echo "_"$category"_$funcindex(){"
@@ -118,7 +137,7 @@ transpile_when_done(){
 
 transpile_switch(){
   push stack "esac"
-  echo "${1/switch/case} in" 
+  echo "${1/switch/case} in"
 }
 
 transpile_case(){
@@ -132,7 +151,7 @@ transpile_array_push(){
 }
 
 transpile_array_get(){
-  code="${1/\$/\"\$\{}"
+  code="${1/\$/\"\${}"
   echo "$code}\""
 }
 
@@ -153,6 +172,6 @@ transpile_function(){
   fields="${fields// /}"
   fields="${fields//,/ }"
   echo "${1//\(*\)/()}{"
-  local i=1; 
+  local i=1;
   for field in $fields; do echo "$indent""local $field=\"\$$i\""; i=$((i+1)); done
 }

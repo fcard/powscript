@@ -1,9 +1,77 @@
 #!/bin/bash
 
-./powscript --compile test/code-1.pow
-for file in test/*.pow; do 
-  echo "-> $file"
+set -E
+
+export ErrorTracker=$(mktemp)
+echo "0" > $ErrorTracker
+
+NoIdent="_noIdent--##$RANDOM"
+
+format() {
+  while IFS='' read -e -r line; do
+    if [[ ! "$line" =~ "$NoIdent".* ]]; then
+      printf "  $line\n"
+    else
+      printf "${line/$NoIdent/}\n"
+    fi
+  done
+}
+
+trap 'echo $? > "$ErrorTracker"' ERR
+
+{
+
+Info="\033[1;35m"
+File="\033[1;34m"
+Pass="\033[1;32m"
+Error="\033[1;31m"
+Nc="\033[0;00m"
+
+decl_file() {
+  printf "${NoIdent}${File}$1\n${Nc}"
+}
+
+checktest() {
+  if [ ! -x $2 ]; then
+    wait $!
+    local exitcode=$?
+  else
+    local exitcode=$1
+  fi
+  if [[ $exitcode == "0" ]]; then
+    printf "${NoIdent}${Pass}Tests passed!\n${Nc}\n"
+  else
+    printf "${NoIdent}${Error}Tests failed!\n${Nc}\n"
+    exit 1
+  fi
+}
+
+header() {
+  printf "${NoIdent}${Info}$1${Nc}\n"
+}
+
+header "Compilation test:"
+./powscript --compile test/code-1.pow;
+checktest $? $! || exit 1
+
+header "Evaluation tests:"
+for file in test/*.pow; do
+  decl_file "$file"
   ./powscript $file
+  checktest $? $! || exit 1
 done
-echo 'OK'
-exit 0
+
+header "Interactive mode tests:"
+for file in test/interactive/*.pow; do
+  decl_file "$file"
+  ./powscript --interactive < $file
+  checktest $? $! || exit 1
+done
+header 'OK'
+
+} | format
+
+Err="$(cat "$ErrorTracker")"
+rm $ErrorTracker
+
+exit $Err
