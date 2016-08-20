@@ -68,7 +68,7 @@ transpile_sugar(){
     [[ "$line" =~ ^([a-zA-Z_0-9]*\([a-zA-Z_0-9, ]*\)) ]] && transpile_function "$line"                   && continue
     echo "$line" | transpile_all
   done <  $1
-  stack_update ""
+  $endoftext && stack_update ""
 }
 
 cat_requires(){
@@ -118,12 +118,7 @@ compile(){
 
 
 process(){
-  evalstr="$evalstr\n""$*"
-  if  [[ ! "$*" =~ ^([A-Za-z_0-9]*=) ]]  && \
-      [[ ! "$*" =~ \)$ ]]                && \
-      [[ ! "$*" =~ ^([ ][ ]) ]]; then
-    evaluate "$evalstr"
-  fi
+  evaluate "$1"
 }
 
 evaluate(){
@@ -232,20 +227,45 @@ lint_pipe(){
 }
 
 prompt() {
-  printf '%'$((1+$ismult+$depth))'s' | tr ' ' ">"
-  printf ' '
+  printf "\001\033[1m\002"
+  printf 'pow'
+  printf "[$depth]"
+  printf '>'
+  [[ $ismult == 1 ]] && printf '>'
+  printf "\001\033[0m\002 "
 }
 
 escapedline() {
   local mult="$1"
   local line="$2"
+  local delimiter="$3"
 
-  if [ -x $mult ]; then
+  if [[ ! -n $mult ]]; then
     mult="$line"
   else
-    mult="$mult$line"
+    mult="${mult}${delimiter}${line}"
   fi
   printf "$mult"
+}
+
+escape_newlines() {
+  while IFS="" read line; do
+    printf "$line\\\n"
+  done < <(echo "$1" | sed '$d')
+  local lastline="$(echo "$1" | tail -1)"
+  printf "$lastline"
+  [[ $lastline =~ ^( )+ ]] && printf "\\\n"
+}
+
+stack_after() {
+(
+  if [[ "$2" != "" ]] && [[ ! "$2" =~ \n$ ]]; then
+    endoftext=false transpile_sugar <( echo "$1" )
+    echo "${#stack[@]}"
+  else
+    echo 0
+  fi
+) | tail -1
 }
 
 console(){
@@ -255,14 +275,20 @@ console(){
   local multiline=''
   while IFS="" read -r -e -d $'\n' -p "$(prompt)" line; do
     if [[ $line == *'\' ]]; then
-      multiline="$(escapedline "$multiline" "${line%?}")"
+      local multiline="$(escapedline "$multiline" "${line%?}")"
       ismult=1
     else
-      multiline="$(escapedline "$multiline" "$line")"
-      "$1" "$multiline" || [[ $? =~ (0|1|2|3|13|15) ]]
-      history -s "$multiline"
-      multiline=''
+      local delimiter="\n"
+      [[ $ismult == 1 ]] && delimiter=""
       ismult=0
+      local multiline="$( escapedline "$multiline" "$line" "$delimiter" )"
+      depth=$(stack_after "$multiline" "$line")
+      if [[ $depth == 0 ]]; then
+        "$1" "$multiline\n#" || [[ $? =~ (0|1|2|3|13|15) ]]
+        echo
+        history -s "$(escape_newlines "$multiline")"
+        local multiline=''
+      fi
     fi
   done
 }

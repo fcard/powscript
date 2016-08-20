@@ -1,2 +1,19 @@
 echo \
   "I am in a different line than my command!"
+
+if true
+  echo "look ma I can handle blocks now!"
+
+func()
+  echo "and make sure I didn't break functions..."
+func
+
+y=( 1 2 3 )
+for x in y
+  if $x is 1
+    printf "All "
+  elif $x is 2
+    printf "is "
+  else
+    echo "well!"
+
