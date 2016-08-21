@@ -219,7 +219,7 @@ lint_pipe(){
   output="$(echo "$code" | awk -F"[  ]" '{ j=0; for(i=1;i<=NF && ($i=="");i++); j++; if( ((i-1)%2) != 0 ){ print "indent error: "$j" "$i; }  }')"
   if [[ ${#output} != 0 ]]; then
     echo "$output" 1>&2
-    exit 1
+    return 1
   else
     echo "$code"
     return 0
