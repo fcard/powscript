@@ -3,3 +3,15 @@ if -x $(command -v python)
 else
   echo "python doesn't exist"
 
+if "x" is "y"
+  echo "wrong!"
+elif "x" is "x"
+  echo "right!"
+else
+  echo "wrong!!"
+
+if true
+  if true
+    echo "nested glued ifs!"
+else
+  echo "I shall not appear."
