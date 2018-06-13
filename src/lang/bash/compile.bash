@@ -25,7 +25,7 @@ bash:compile() { #<<NOSHADOW>>
     function-def|local|block|math|math-top|math-float|\
     math-assigned|math-expr|assign-sequence|readline|file-input|\
     string-length|string-removal|string-default|string-test|\
-    string-indirect|double-string|nothing|empty-substitution|flag*)
+    variable-dereference|double-string|nothing|empty-substitution|flag*)
 
       sh:compile $expr "$out"
       ;;
