@@ -1,0 +1,12 @@
+hello-world?()
+  echo "hello world!!"
+
+f(g)
+  expand
+    ~g(x)
+      echo $(math x+1)
+
+assert $(hello-world?) is "hello world!!"
+
+f h
+assert $(h 1) is 2

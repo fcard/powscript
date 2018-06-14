@@ -1,5 +1,6 @@
 ast:lower() { #<<NOSHADOW>>
   local expr="$1" out="$2"
+  local low
 
   local VarsInScope=''
   declare -i CurrentScope
@@ -9,7 +10,18 @@ ast:lower() { #<<NOSHADOW>>
   typing:scan $expr
 
   CurrentScope=0
-  ast:lower-scanned $expr "$out"
+  ast:lower-scanned $expr low
+
+  if [ "${deref_assigns+x}" = x ]; then
+    ast:make-from-string "$out" "
+      block
+      + $deref_assigns
+      + $low
+    "
+    unset deref_assigns
+  else
+    setvar "$out" "$low"
+  fi
 }
 noshadow ast:lower 1
 
@@ -190,7 +202,7 @@ ast:lower-scanned() { #<<NOSHADOW>>
 
       typing:end-scope
       ;;
-    name|math*|string)
+    name|math*|string|array-operation)
       result=$expr
       ;;
     assign-conditional)
@@ -218,19 +230,42 @@ ast:lower-scanned() { #<<NOSHADOW>>
 
     assign-ref)
       local var value varname
-      local lowvalue
+      local assign lowvalue
 
       ast:children $expr var value
       ast:lower-scanned $value lowvalue
 
       ast:from $var value varname
+
+      if ast:is $var name; then
+        ast:make-from-string assign "
+          assign
+          - name ~$varname
+          + $lowvalue
+        "
+      else
+        local index lowindex deref derefname
+        ast:children $var index
+        ast:lower-scanned $index lowindex
+
+        ast:dereference $var deref
+        ast:from $deref value derefname
+
+        ast:make-from-string assign "
+          indexing-assign
+          - name ~$derefname
+          + $lowindex
+          + $lowvalue
+        "
+      fi
+
       ast:make-from-string result "
         block
         - light-assert
         -- condition not
         --- condition is
         ---- string-removal $varname
-        ----- pattern __powscript_gensym_reference_variable_
+        ----- pattern __powscript_gensym_*reference_variable_
         ----- name #
         ---- simple-substitution $varname
         -- cat
@@ -239,9 +274,7 @@ ast:lower-scanned() { #<<NOSHADOW>>
         --- string  is not a reference
         - expand
         -- block
-        --- assign
-        ---- name ~$varname
-        ---+ $lowvalue
+        --+ $assign
       "
       ;;
 
@@ -265,7 +298,9 @@ ast:lower-scanned() { #<<NOSHADOW>>
             ast:from $refvar value refname
             ast:make-from-string refassign "
               local
-              + $refvar
+              - assign
+              -+ $refvar
+              -- simple-substitution $arg_value
             "
             ast:make-from-string refret "
               assign
@@ -276,8 +311,42 @@ ast:lower-scanned() { #<<NOSHADOW>>
             ref_returns+=" $refret"
             low_arguments+=" $refvar"
             ;;
+          array-reference)
+            local refassign refvar refname
+            ast:gensym refvar array_reference
+            ast:make-from-string refassign "
+              local
+              - assign
+              -+ $refvar
+              -- name $arg_value
+            "
+            ref_assigns+=" $refassign"
+            low_arguments+=" $refvar"
+            ;;
+          list)
+            local array_ref refassign refvar lowlist
+            ast:lower-scanned $arg lowlist
+            ast:gensym array_ref temp_array
+            ast:gensym refvar    array_reference
+
+            ast:make-from-string refassign "
+              block
+              - declare array
+              -+ $array_ref
+              - assign
+              -+ $array_ref
+              -+ $lowlist
+              - assign
+              -+ $refvar
+              -+ $array_ref
+            "
+            ref_assigns+=" $refassign"
+            low_arguments+=" $refvar"
+            ;;
           *)
-            low_arguments+=" $arg"
+            local lowarg
+            ast:lower-scanned $arg lowarg
+            low_arguments+=" $lowarg"
             ;;
         esac
       done
@@ -293,6 +362,50 @@ ast:lower-scanned() { #<<NOSHADOW>>
           + $ref_returns
         "
       fi
+      ;;
+    block)
+      local deref_assigns whitespace elements low_elements=""
+      local element low_element
+
+      ast:all-from $expr -v whitespace -c elements
+      for element in $elements; do
+        deref_assigns=""
+        ast:lower-scanned $element low_element
+        low_elements+=" $deref_assigns $low_element"
+      done
+
+      ast:make result block "$whitespace" $low_elements
+      ;;
+    variable-dereference)
+      local refvar refname var varname
+
+      ast:from $expr value varname
+      ast:make var name "$varname"
+
+      ast:dereference $var refvar
+      ast:from $refvar value refname
+
+      ast:make result simple-substitution "$refname"
+      ;;
+    array-dereference)
+      local index deref_var deref_assign
+      local deref_varname array_ref
+
+      ast:from $expr value    array_ref
+      ast:from $expr children index
+
+      ast:gensym deref_var "array_dereference"
+      ast:from $deref_var value deref_varname
+
+      ast:make-from-string deref_assign "
+         expand
+        - assign
+        -+ $deref_var
+        -- indexing-substitution ~{!$array_ref}
+        --+ $index
+      "
+      deref_assigns+=" $deref_assign"
+      ast:make result simple-substitution "$deref_varname"
       ;;
     *)
       local expr_value expr_children child lowered_child
@@ -313,10 +426,29 @@ ast:lower-scanned() { #<<NOSHADOW>>
 }
 noshadow ast:lower-scanned 1
 
+ast:dereference() { #<<NOSHADOW>>
+  local var="$1" out="$2"
+  local varname deref_assign
+  ast:gensym "$out" "dereference"
+
+  ast:from $var value varname
+
+  ast:make-from-string deref_assign "
+    expand
+    - assign
+    -+ ${!out}
+    -- simple-substitution ~$varname
+  "
+  deref_assigns+=" $deref_assign"
+}
+noshadow ast:dereference 1
+
 ast:extract-function-arguments() { #<<NOSHADOW>>
   local args_expr="$1" out="$2"
   local positionals="" keywords=""
-  local arg args arg_head arg_value kw=false
+  local arg args arg_head arg_value
+  local kw=false has_rest_pos=false has_rest_kw=false
+  local rest_keyword rest_positional
   declare -i positional_count keyword_count
 
   positional_count=0
@@ -328,16 +460,42 @@ ast:extract-function-arguments() { #<<NOSHADOW>>
     ast:from $arg head arg_head
     case "$arg_head" in
       name)
-        if $kw; then
+        if { $has_rest_pos && ! $kw; } || $has_rest_kw; then
+          ast:error "'rest' argument must be the last of it's kind in the list ($arg_value)"
+
+        elif $kw; then
           keyword_count+=1
           ast:from $arg value arg_value
           ast:make arg name $arg_value
           keywords+=" $arg"
+
         else
           positional_count+=1
           positionals+=" $arg"
         fi
         ;;
+
+      cat)
+        local first second more
+        ast:children $arg first second more
+
+        if ast:is $first name '@' && ast:is $second name && [ -z "$more" ]; then
+          ast:from $second value arg_value
+
+          if { $has_rest_pos && ! $kw; } || $has_rest_kw; then
+            ast:error "'rest' argument must be the last of it's kind in the list ($arg_value)"
+          elif $kw; then
+            has_rest_kw=true
+            rest_keyword="$arg_value"
+          else
+            has_rest_pos=true
+            rest_positional="$arg_value"
+          fi
+        else
+          ast:error "Invalid name used for function argument (ast:print $arg)"
+        fi
+        ;;
+
       flag-double-dash-only)
         if $kw; then
           ast:error 'can only have one '--' in argument lists'
@@ -351,15 +509,35 @@ ast:extract-function-arguments() { #<<NOSHADOW>>
     esac
   done
 
-  case "$positional_count:$keyword_count" in
-    0:0)
-      ast:make "$out" nothing
+  case "$positional_count:$kw" in
+    0:false)
+      if $has_rest_pos; then
+        ast:make-from-string "$out" "
+        block
+        - declare array
+        -- name $rest_positional
+        - assign
+        -- name $rest_positional
+        -- list
+        --- simple-substitution @
+        "
+      else
+        ast:make "$out" nothing
+      fi
       ;;
-    *:0)
+    *:false)
       local locals test isset assign subst
       positional_count=1
       ast:make locals local '' $positionals
       ast:make "$out" block '' $locals
+      if $has_rest_pos; then
+        ast:make-from-string test "
+          declare array
+          - name $rest_positional
+        "
+        ast:push-child "${!out}" $test
+      fi
+
       for arg in $positionals; do
         ast:make-from-string test "
           condition and
@@ -373,9 +551,23 @@ ast:extract-function-arguments() { #<<NOSHADOW>>
         ast:push-child "${!out}" $test
         positional_count+=1
       done
+      if $has_rest_pos; then
+        ast:make-from-string test "
+          condition and
+          - condition >=
+          -- name \$#
+          -- name $positional_count
+          - assign
+          -- name $rest_positional
+          -- list
+          --- string-slice-from @
+          ---- name $positional_count
+        "
+        ast:push-child "${!out}" $test
+      fi
       ;;
-    *:*)
-      local argvar keyvar posvar locals arg_set arg_test key_assign
+    *:true)
+      local argvar keyvar posvar locals restdecs arg_set arg_test key_assign
       local key keyname keylocals="" keylocal
 
       ast:gensym argvar keyword_arg
@@ -390,11 +582,24 @@ ast:extract-function-arguments() { #<<NOSHADOW>>
 
       ast:make locals local '' $argvar $keyvar $posvar $positionals $keylocals
 
-      ast:make-argument-test  "$argvar" "$keyvar" "$posvar" "$positionals" arg_test
-      ast:make-keyword-assign "$argvar" "$keyvar" "$posvar" "$keywords"    key_assign
+      ast:make-argument-test  "$argvar" "$keyvar" "$posvar" "$positionals" "$rest_positional" arg_test
+      ast:make-keyword-assign "$argvar" "$keyvar" "$posvar" "$keywords"    "$rest_keyword"    key_assign
       ast:make-argument-set   "$argvar" "$keyvar" "$posvar" "$arg_test" "$key_assign" arg_set
 
-      ast:make "$out" block '' $locals $arg_set
+      if $has_rest_pos || $has_rest_kw; then
+        ast:make-from-string restdecs "
+          block
+          ${rest_positional:+"
+            - declare array
+            -- name $rest_positional
+          "}
+          ${rest_keyword:+"
+            - declare map
+            -- name $rest_keyword
+          "}
+        "
+      fi
+      ast:make "$out" block '' $locals $restdecs $arg_set
       ;;
   esac
 }
@@ -438,7 +643,7 @@ ast:make-argument-set() { #<<NOSHADOW>>
 noshadow ast:make-argument-set 5
 
 ast:make-argument-test() { #<<NOSHADOW>>
-  local argvar="$1" keyvar="$2" posvar="$3" positionals="$4" out="$5"
+  local argvar="$1" keyvar="$2" posvar="$3" positionals="$4" rpos="$5" out="$6"
   local arg argcase cases=""
   local argvar_name posvar_name emptycases
   declare -i poscount=1
@@ -465,7 +670,27 @@ ast:make-argument-test() { #<<NOSHADOW>>
     poscount+=1
   done
 
-  [ -z "$cases" ] && emptycases="---- name true"
+  if [ -n "$rpos" ]; then
+    ast:make-from-string argcase "
+      case
+      - pattern *
+      - block
+      -- indexing-assign
+      --- name $rpos
+      --- array-length $rpos
+      --- simple-substitution $argvar_name
+      --+ $posvar
+      --- math-expr
+      ---- math +
+      ----+ $posvar
+      ----- name 1
+    "
+    cases+=" $argcase"
+  fi
+
+  if [ -z "$cases" ]; then
+    emptycases="---- name true"
+  fi
 
   ast:make-from-string "$out" "
     switch
@@ -489,10 +714,10 @@ ast:make-argument-test() { #<<NOSHADOW>>
     $emptycases
   "
 }
-noshadow ast:make-argument-test 4
+noshadow ast:make-argument-test 5
 
 ast:make-keyword-assign() { #<<NOSHADOW>>
-  local argvar="$1" keyvar="$2" posvar="$3" keywords="$4" out="$5"
+  local argvar="$1" keyvar="$2" posvar="$3" keywords="$4" rkey="$5" out="$6"
   local cases="" keycase key keyname keyshort
   local keyvar_name argvar_name
 
@@ -514,24 +739,47 @@ ast:make-keyword-assign() { #<<NOSHADOW>>
     cases+=" $keycase"
   done
 
+  if [ -n "$rkey" ]; then
+    ast:make-from-string keycase "
+    case
+    - pattern *
+    - block
+    -- assign
+    --+ $keyvar
+    --- string-slice-from $keyvar_name
+    ---- name 1
+    -- indexing-assign
+    --- name $rkey
+    --- string-removal $keyvar_name
+    ---- pattern -
+    ---- name #
+    --- simple-substitution $argvar_name
+    "
+    cases+=" $keycase"
+  else
+    ast:make-from-string keycase "
+    case
+    - pattern *
+    - block
+    -- call
+    --- assign-sequence
+    --- name :
+    "
+    cases+=" $keycase"
+  fi
+
   ast:make-from-string "$out" "
     block
     - switch
     -- simple-substitution $keyvar_name
     -- block
     --+ $cases
-    --- case
-    ---- pattern *
-    ---- block
-    ----- call
-    ------ assign-sequence
-    ------ name :
     - assign
     -+ $keyvar
     -- string
   "
 }
-noshadow ast:make-keyword-assign 4
+noshadow ast:make-keyword-assign 5
 
 typing:start-scope() {
   CurrentScope+=1
@@ -569,7 +817,7 @@ typing:declared-name() { #<<NOSHADOW>>
 
   ast:from $expr head expr_head
   case $expr_head in
-    name|flag-double-dash-only)
+    name|flag-double-dash-only|cat)
       ;;
     *assign)
       ast:children $expr expr

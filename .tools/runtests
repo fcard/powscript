@@ -98,6 +98,9 @@ testdirectory "test/lib" './powscript ${file}' 'file' '.*\.pow'
 header "Interactive mode tests:"
 testdirectory "test/interactive" './powscript --no-std --interactive < ${file}' 'file'
 
+header "Sh tests:"
+testdirectory "test/lang/sh" './powscript --no-std --to sh ${file}' 'file'
+
 header "Repository maintainance tests:"
 testdirectory "test/repo" './${file}' 'file' '.*\.sh'
 
