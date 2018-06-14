@@ -6098,7 +6098,13 @@ __shadowing_sh:compile() {
       backend:compile ${children[0]} assigns
       backend:compile ${children[1]} cmd
 
-      result="$assigns$cmd"
+      if [ $PowscriptBackend = sh ] && [[ ! "$cmd" =~ ^~/ ]] && [ -n "${cmd//[[:alnum:]_]/}" ]; then
+        local sh_cmd
+        sh:sh-name $cmd sh_cmd
+        result="$assigns\${__pwf_$sh_cmd-$cmd}"
+      else
+        result="$assigns$cmd"
+      fi
       for arg_ast in "${children[@]:2}"; do
         backend:compile $arg_ast arg
         result="$result $arg"
@@ -6307,7 +6313,16 @@ __shadowing_sh:compile() {
       backend:compile $name_ast name
       INSIDE_FUNCTION=true backend:compile $block_ast block
 
-      setvar "$out" "$name() $block"
+      if [[ "$name" =~ ^~/ ]]; then
+        echo "ERROR: cannot start function name with ~/"
+        exit 1
+      elif [ $PowscriptBackend = sh ] && [ -n "${name//[[:alnum:]_]/}" ]; then
+        local sh_name
+        sh:sh-name "$name" sh_name
+        setvar "$out" "__pwf_$sh_name=$sh_name; $sh_name() $block"
+      else
+        setvar "$out" "$name() $block"
+      fi
       ;;
 
     local)
@@ -6433,6 +6448,38 @@ sh:compile() {
   setvar "$2" "$__noshadow_58_2"
 }
 
+
+
+__shadowing_sh:sh-name() {
+  local name="$1" out="$2"
+  local shname=""
+
+  declare -i i=0
+
+  while [ $i -lt ${#name} ]; do
+    if [[ "${name:$i:1}" =~ [[:alnum:]_] ]]; then
+      shname+="${name:$i:1}"
+    elif [ $i = 0 ] && [ "${name:0:1}" = '~' ]; then
+      shname+="~"
+    else
+      local c
+      printf -v c '_a%d_' "'${name:$i:1}"
+      shname+="$c"
+    fi
+    i+=1
+  done
+  setvar "$out" "$shname"
+}
+
+sh:sh-name() {
+  if [ -z ${__noshadow_59_+x} ]; then
+    local __noshadow_59_
+    local __noshadow_59_2
+  fi
+  __shadowing_sh:sh-name "$1"  __noshadow_59_2
+  setvar "$2" "$__noshadow_59_2"
+}
+
 # FILE: lang/sh/compile.bash
 
 backend:select() {
@@ -6509,7 +6556,7 @@ powscript:help() {
   '
 }
 # FILE: compiler/helptext.bash
-POWSCRIPT_VERSION=1.1.4
+POWSCRIPT_VERSION=1.1.5
 
 version:number() {
   echo "$POWSCRIPT_VERSION"
@@ -6963,12 +7010,12 @@ __shadowing_interactive:get-remaining-input() {
 }
 
 interactive:get-remaining-input() {
-  if [ -z ${__noshadow_59_+x} ]; then
-    local __noshadow_59_
-    local __noshadow_59_1
+  if [ -z ${__noshadow_60_+x} ]; then
+    local __noshadow_60_
+    local __noshadow_60_1
   fi
-  __shadowing_interactive:get-remaining-input  __noshadow_59_1
-  setvar "$1" "$__noshadow_59_1"
+  __shadowing_interactive:get-remaining-input  __noshadow_60_1
+  setvar "$1" "$__noshadow_60_1"
 }
 
 

@@ -210,7 +210,13 @@ sh:compile() { #<<NOSHADOW>>
       backend:compile ${children[0]} assigns
       backend:compile ${children[1]} cmd
 
-      result="$assigns$cmd"
+      if [ $PowscriptBackend = sh ] && [[ ! "$cmd" =~ ^~/ ]] && [ -n "${cmd//[[:alnum:]_]/}" ]; then
+        local sh_cmd
+        sh:sh-name $cmd sh_cmd
+        result="$assigns\${__pwf_$sh_cmd-$cmd}"
+      else
+        result="$assigns$cmd"
+      fi
       for arg_ast in "${children[@]:2}"; do
         backend:compile $arg_ast arg
         result="$result $arg"
@@ -419,7 +425,16 @@ sh:compile() { #<<NOSHADOW>>
       backend:compile $name_ast name
       INSIDE_FUNCTION=true backend:compile $block_ast block
 
-      setvar "$out" "$name() $block"
+      if [[ "$name" =~ ^~/ ]]; then
+        echo "ERROR: cannot start function name with ~/"
+        exit 1
+      elif [ $PowscriptBackend = sh ] && [ -n "${name//[[:alnum:]_]/}" ]; then
+        local sh_name
+        sh:sh-name "$name" sh_name
+        setvar "$out" "__pwf_$sh_name=$sh_name; $sh_name() $block"
+      else
+        setvar "$out" "$name() $block"
+      fi
       ;;
 
     local)
@@ -536,3 +551,25 @@ sh:compile() { #<<NOSHADOW>>
   esac
 }
 noshadow sh:compile 1
+
+sh:sh-name() { #<<NOSHADOW>>
+  local name="$1" out="$2"
+  local shname=""
+
+  declare -i i=0
+
+  while [ $i -lt ${#name} ]; do
+    if [[ "${name:$i:1}" =~ [[:alnum:]_] ]]; then
+      shname+="${name:$i:1}"
+    elif [ $i = 0 ] && [ "${name:0:1}" = '~' ]; then
+      shname+="~"
+    else
+      local c
+      printf -v c '_a%d_' "'${name:$i:1}"
+      shname+="$c"
+    fi
+    i+=1
+  done
+  setvar "$out" "$shname"
+}
+noshadow sh:sh-name 1
