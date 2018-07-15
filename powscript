@@ -675,6 +675,7 @@ __shadowing_token:parse() {
           u)        token:parse-unicode-utf-16 e ; move=false ;;
           U)        token:parse-unicode-utf-32 e ; move=false ;;
           \\)       e='\' ;;
+          \$)       e='$' ;;
           *)        e="\\$c" ;;
         esac
         token+="$e"
@@ -6172,7 +6173,7 @@ powscript:help() {
   '
 }
 # FILE: compiler/helptext.bash
-POWSCRIPT_VERSION=1.1.1
+POWSCRIPT_VERSION=1.1.2
 
 version:number() {
   echo "$POWSCRIPT_VERSION"
