@@ -1,0 +1,4 @@
+assert "\\" is '\'
+assert "\a" is '\a'
+assert "\$" is '$'
+assert "%"  is '%'

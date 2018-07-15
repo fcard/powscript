@@ -65,6 +65,7 @@ token:parse() { #<<NOSHADOW>>
           u)        token:parse-unicode-utf-16 e ; move=false ;;
           U)        token:parse-unicode-utf-32 e ; move=false ;;
           \\)       e='\' ;;
+          \$)       e='$' ;;
           *)        e="\\$c" ;;
         esac
         token+="$e"
